@@ -1,6 +1,6 @@
 module github.com/cedi/urlshortener-ui
 
-go 1.22
+go 1.24.0
 
 require (
 	github.com/MrAlias/flow v0.1.5
