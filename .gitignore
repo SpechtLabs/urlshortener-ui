@@ -81,3 +81,4 @@ Temporary Items
 __debug_bin
 build/
 .vscode/launch.json
+.idea
