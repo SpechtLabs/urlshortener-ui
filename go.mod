@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/MrAlias/flow v0.1.5
-	github.com/cedi/urlshortener v0.0.0-20250322020038-f8ec2ab000d7
+	github.com/cedi/urlshortener v0.1.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/phayes/permbits v0.0.0-20190612203442-39d7c581d2ee
 	github.com/pkg/errors v0.9.1
