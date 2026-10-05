@@ -1,132 +1,142 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
-	"github.com/cedi/urlshortener-ui/pkg/model"
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"github.com/sierrasoftworks/humane-errors-go"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/spechtlabs/urlshortener-ui/pkg/model"
 )
 
-func (c *UIClient) HandleLogin(ct *gin.Context) {
-	ctx := ct.Request.Context()
-	span := trace.SpanFromContext(ctx)
+// HandleRoot sends a logged-in user to their shortlinks and everyone else to
+// the login page.
+func (c *UIClient) HandleRoot(ct *gin.Context) {
+	ctx, span := c.startSpan(ct, "UIClient.HandleRoot")
+	defer span.End()
 
-	// Check if the span was sampled and is recording the data
-	if !span.IsRecording() {
-		_, span = c.tracer.Start(ctx, "UIClient.HandleLogin")
-		defer span.End()
+	token, err := loginToken(ct)
+	if err != nil {
+		redirectToLogin(ct, err)
+		return
 	}
 
-	redirectURI := c.config.RedirectURL
-	span.SetAttributes(attribute.String("redirect_uri", redirectURI))
+	if _, err := c.getGhUser(ctx, token); err != nil {
+		span.RecordError(err)
+		redirectToLogin(ct, err)
+		return
+	}
 
-	otelgin.HTML(
-		ct,
-		http.StatusOK,
-		"login.html",
-		gin.H{
-			"clientID":     c.config.ClientID,
-			"redirect_uri": redirectURI,
-		},
-	)
+	ct.Redirect(http.StatusFound, "/home")
 }
 
+// HandleLogin renders the login page, which sends the user to GitHub.
+func (c *UIClient) HandleLogin(ct *gin.Context) {
+	_, span := c.startSpan(ct, "UIClient.HandleLogin")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("redirect_uri", c.config.RedirectURL))
+
+	ct.HTML(http.StatusOK, "login.html", gin.H{
+		"clientID":     c.config.ClientID,
+		"redirect_uri": c.config.RedirectURL,
+	})
+}
+
+// HandleLoginOauthRedirect is where GitHub sends the user back to: it trades
+// the code GitHub passed for the user's token, keeps the token in the auth
+// cookie and sends the user to their shortlinks.
 func (c *UIClient) HandleLoginOauthRedirect(ct *gin.Context) {
-	ctx := ct.Request.Context()
-	span := trace.SpanFromContext(ctx)
+	ctx, span := c.startSpan(ct, "UIClient.HandleLoginOauthRedirect")
+	defer span.End()
 
-	// Check if the span was sampled and is recording the data
-	if !span.IsRecording() {
-		_, span = c.tracer.Start(ctx, "UIClient.HandleLoginOauthRedirect")
-		defer span.End()
+	code := ct.Query("code")
+	if code == "" {
+		err := humane.New(fmt.Sprintf("GitHub login failed: %s: %s", ct.Query("error"), ct.Query("error_description")), loginAdvice)
+		span.RecordError(err)
+		redirectToLogin(ct, err)
+		return
 	}
 
-	log := logrus.WithContext(ctx)
+	token, err := c.exchangeCode(ctx, code)
+	if err != nil {
+		span.RecordError(err)
+		renderError(ct, http.StatusInternalServerError, err)
+		return
+	}
 
-	// We will be using `httpClient` to make external HTTP requests later in our code
-	httpClient := http.Client{
+	ct.SetCookie(loginCookieName, token, loginCookieMaxAge, "/", c.config.DashboardURL, true, true)
+	ct.Redirect(http.StatusFound, "/home")
+}
+
+// exchangeCode trades the code GitHub passed to the redirect for the user's
+// token. The client secret travels in the request body, so it stays out of
+// the request URL that traces record.
+func (c *UIClient) exchangeCode(ctx context.Context, code string) (string, humane.Error) {
+	form := url.Values{
+		"client_id":     {c.config.ClientID},
+		"client_secret": {c.config.ClientSecret},
+		"code":          {code},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.gitHubLoginURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", humane.Wrap(err, "could not create HTTP request", "This is a bug in the GitHub login; please report it")
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   gitHubTimeout,
 	}
 
-	// First, we need to get the value of the `code` query param
-	err := ct.Request.ParseForm()
+	resp, err := client.Do(req)
 	if err != nil {
-		span.RecordError(err)
-		log.WithError(err).Error("could not parse query")
-
-		ct.Redirect(http.StatusFound, "/login")
-		return
+		return "", humane.Wrap(err, "could not send HTTP request", "Check that the UI can reach github.com, then try again")
 	}
-	code := ct.Request.FormValue("code")
+	defer func() { _ = resp.Body.Close() }()
 
-	if len(code) == 0 {
-		errMsg := ct.Request.FormValue("error")
-		errDesc := ct.Request.FormValue("error_description")
-		errURI := ct.Request.FormValue("error_uri")
-
-		err = fmt.Errorf("%s: %s", errMsg, errDesc)
-
-		span.RecordError(err)
-		log.WithError(err).WithFields(logrus.Fields{
-			"error":             errMsg,
-			"error_description": errDesc,
-			"error_uri":         errURI,
-		}).Error("Failed GitHub Auth request")
-
-		ct.Redirect(http.StatusFound, "/login")
-		return
+	var access model.OAuthAccessResponse
+	if err := json.NewDecoder(resp.Body).Decode(&access); err != nil {
+		return "", humane.Wrap(err, "could not parse JSON response", "GitHub answered with something other than a token; try again later")
 	}
 
-	// Next, lets for the HTTP request to call the github oauth endpoint to get our access token
-	reqURL := fmt.Sprintf("https://github.com/login/oauth/access_token?client_id=%s&client_secret=%s&code=%s", c.config.ClientID, c.config.ClientSecret, code)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
-	if err != nil {
-		span.RecordError(err)
-		log.WithError(err).Error("could not create HTTP request")
-
-		ct.Redirect(http.StatusFound, "/login")
-		return
-	}
-	// We set this header since we want the response as JSON
-	req.Header.Set("accept", "application/json")
-
-	// Send out the HTTP request
-	res, err := httpClient.Do(req)
-	if err != nil {
-		span.RecordError(err)
-		log.WithError(err).Error("could not send HTTP request")
-
-		ct.Redirect(http.StatusFound, "/login")
-		return
-	}
-	defer res.Body.Close()
-
-	// Parse the request body into the `OAuthAccessResponse` struct
-	var t model.OAuthAccessResponse
-	if err := json.NewDecoder(res.Body).Decode(&t); err != nil {
-		span.RecordError(err)
-		log.WithError(err).Error("could not parse JSON response")
-
-		ct.Redirect(http.StatusFound, "/login")
-		return
-	}
-
-	if len(t.AccessToken) == 0 {
-		otelgin.HTML(
-			ct,
-			http.StatusInternalServerError,
-			"500.html",
-			gin.H{},
+	if access.AccessToken == "" {
+		return "", humane.New("GitHub answered without an access token",
+			"Check that CLIENT_ID and CLIENT_SECRET belong to the GitHub OAuth app, then log in again",
 		)
 	}
 
-	ct.SetCookie(authCookieName, t.AccessToken, 3600, "/", c.config.DashboardURL, true, true)
-	ct.Redirect(http.StatusFound, "/home")
+	return access.AccessToken, nil
 }
+
+// startSpan returns the request's span, or starts one named name when the
+// request's span isn't recording. The caller ends it.
+func (c *UIClient) startSpan(ct *gin.Context, name string) (context.Context, trace.Span) {
+	ctx := ct.Request.Context()
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		// Ending the request's span is otelgin's job.
+		return ctx, nonEndingSpan{span}
+	}
+
+	return c.tracer.Start(ctx, name)
+}
+
+// nonEndingSpan is a span whose End does nothing, for handing out a span
+// someone else ends.
+type nonEndingSpan struct {
+	trace.Span
+}
+
+// End does nothing; the span's owner ends it.
+func (nonEndingSpan) End(...trace.SpanEndOption) {}

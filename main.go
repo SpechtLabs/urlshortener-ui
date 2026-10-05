@@ -1,9 +1,16 @@
 package main
 
 import (
-	"github.com/cedi/urlshortener-ui/cmd"
+	"os"
+
+	"github.com/sierrasoftworks/humane-errors-go"
+
+	"github.com/spechtlabs/urlshortener-ui/cmd"
 )
 
 func main() {
-	cmd.Execute()
+	if err := cmd.NewRootCommand().Execute(); err != nil {
+		humane.Eprint(err)
+		os.Exit(1)
+	}
 }
