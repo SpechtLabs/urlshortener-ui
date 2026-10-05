@@ -1,0 +1,65 @@
+# The pages and their handlers
+ui:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pkg/client/**"
+          - "pkg/router/**"
+          - "html/**"
+
+# The urlshortener API client (swagger-codegen's output)
+api-client:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pkg/swagger/**"
+
+# The command line, configuration and the image
+cli:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "main.go"
+          - "cmd/**"
+          - "pkg/config/**"
+          - "Dockerfile"
+
+# Tests
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*_test.go"
+
+# Documentation
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+
+# Build, release, and CI plumbing
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - ".release-please-config.json"
+          - ".release-please-manifest.json"
+          - ".mise.toml"
+          - ".golangci.yaml"
+          - ".custom-gcl.yml"
+          - ".pre-commit-config.yaml"
+          - ".yamllint.yaml"
+          - ".editorconfig"
+          - ".dockerignore"
+          - "codecov.yml"
+          - "renovate.json"
+          - "go.mod"
+          - "go.sum"
+
+# Add 'enhancement' to any PR whose head branch starts with `feat` or `feature`
+enhancement:
+  - head-branch:
+      - "^feat"
+      - "^feature"
+
+# Add 'bug' to any PR whose head branch starts with `fix` or `bug`
+bug:
+  - head-branch:
+      - "^fix"
+      - "^bug"

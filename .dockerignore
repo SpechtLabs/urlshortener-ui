@@ -1,0 +1,8 @@
+# The build context is the repository; only go.mod, go.sum, the Go packages
+# and html/ reach the image (see the COPY lines in the Dockerfile).
+.git/
+bin/
+dist/
+custom-gcl
+coverage.txt
+*.md

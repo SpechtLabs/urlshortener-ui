@@ -1,127 +1,35 @@
+// Package config holds the UI's configuration, which it reads from the
+// environment.
 package config
 
 import (
-	"fmt"
-	"io/ioutil"
 	"os"
-	"path"
-
-	"github.com/phayes/permbits"
-	"github.com/pkg/errors"
-	"gopkg.in/yaml.v2"
 )
 
-// ConfigPath is the path to our configuration file on disk
-var ConfigPath string
-
+// Config is the UI's configuration.
 type Config struct {
-	ClientID     string `yaml:"client_id"`
-	ClientSecret string `yaml:"client_secret"`
-	SessionState string `yaml:"session_state"`
-	RedirectURL  string `yaml:"redirect_url"`
-	DashboardURL string `yaml:"hostname"`
-	ShortlinkURL string `yaml:"shortlink_url"`
+	// ClientID and ClientSecret identify the GitHub OAuth app users log in
+	// with.
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is where GitHub sends the user back to after they logged
+	// in: the UI's /oauth/redirect.
+	RedirectURL string
+	// DashboardURL is the UI's own host name; the login cookie is set for it.
+	DashboardURL string
+	// ShortlinkURL is the urlshortener API's base URL, which the shortlinks
+	// are served under too.
+	ShortlinkURL string
 }
 
-// NewConfig creates a new, empty, config
-func NewConfig() *Config {
-	return &Config{}
-}
-
-// NewConfig creates a new, empty, config
+// NewConfigFromEnv reads the configuration from CLIENT_ID, CLIENT_SECRET,
+// REDIRECT_URL, DASHBOARD_URL and SHORTLINK_URL.
 func NewConfigFromEnv() *Config {
-	conf := NewConfig()
-
-	// OIDC related
-	conf.ClientID = os.Getenv("CLIENT_ID")
-	conf.ClientSecret = os.Getenv("CLIENT_SECRET")
-	conf.SessionState = os.Getenv("SESSION_STATE")
-	conf.RedirectURL = os.Getenv("REDIRECT_URL")
-
-	// config
-	conf.DashboardURL = os.Getenv("DASHBOARD_URL")
-	conf.ShortlinkURL = os.Getenv("SHORTLINK_URL")
-
-	return conf
-}
-
-// Save saves a configuration
-func (c *Config) Save() error {
-	yamlByte, err := yaml.Marshal(c)
-	if err != nil {
-		return errors.Wrap(err, "Unable to serialize configuration")
+	return &Config{
+		ClientID:     os.Getenv("CLIENT_ID"),
+		ClientSecret: os.Getenv("CLIENT_SECRET"),
+		RedirectURL:  os.Getenv("REDIRECT_URL"),
+		DashboardURL: os.Getenv("DASHBOARD_URL"),
+		ShortlinkURL: os.Getenv("SHORTLINK_URL"),
 	}
-
-	err = ioutil.WriteFile(ConfigPath, yamlByte, 0600)
-	if err != nil {
-		return errors.Wrap(err, "Failed to write configuration")
-	}
-
-	return nil
-}
-
-// Read reads the config file and creates a empty config file if could not find a config file at the given path
-func Read() (*Config, error) {
-	err := EnsureConfig()
-	if err != nil {
-		return NewConfig(), errors.Wrap(err, "Failed to read config")
-	}
-
-	data, err := ioutil.ReadFile(ConfigPath)
-	if err != nil {
-		return NewConfig(), errors.Wrap(err, "Failed to read config")
-	}
-
-	config := &Config{}
-	if err := yaml.Unmarshal(data, config); err != nil {
-		return NewConfig(), errors.Wrap(err, "Failed to parse config")
-	}
-
-	return config, nil
-}
-
-// EnsureConfig ensures that the config is there and exists using the correct permissions.
-func EnsureConfig() error {
-	// Create config file if not exists
-	if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
-		path, _ := path.Split(ConfigPath)
-		os.MkdirAll(path, 0600)
-
-		config := NewConfig()
-		err = config.Save()
-		if err != nil {
-			return errors.Wrap(err, "failed to write empty config")
-		}
-	}
-
-	return checkPermissions(ConfigPath)
-}
-
-func checkPermissions(configPath string) error {
-	permissions, err := permbits.Stat(configPath)
-	if err != nil {
-		return errors.Wrap(err, "failed to check file permissions for config")
-	}
-
-	if permissions.GroupRead() || permissions.GroupWrite() || permissions.GroupExecute() ||
-		permissions.OtherRead() || permissions.OtherWrite() || permissions.OtherExecute() {
-		fmt.Println("")
-		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-		fmt.Println("!! Security Alert")
-		fmt.Println("!! config is world readable!")
-		fmt.Println("!! Since contains OIDC client secrets, this could cause serious security issues!")
-		fmt.Println("!! to get rid of this message, run")
-		fmt.Printf("!! $ chmod -R 600 %s\n", configPath)
-		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-		fmt.Println("")
-	} else if permissions.UserExecute() {
-		fmt.Println("")
-		fmt.Println("!! Configuration anomaly detected")
-		fmt.Println("!! config should not be executable")
-		fmt.Println("!! to get rid of this message, run")
-		fmt.Printf("!! $ chmod -R 600 %s\n", configPath)
-		fmt.Println("")
-	}
-
-	return nil
 }

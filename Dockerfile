@@ -1,37 +1,49 @@
-# Build the urlshortener-api binary
-FROM golang:1.24 as builder
+# urlshortener-ui container image: the web UI, with the HTML templates and
+# assets it serves next to it.
+#
+#   docker build -t urlshortener-ui:dev .    (or: mise run image)
 
-WORKDIR /workspace
+# Keep in lockstep with go in .mise.toml; Renovate bumps both together.
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.1 AS builder
 
-# Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
+WORKDIR /src
 
-# cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+# The module files first, so the download layer survives source edits.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy the go source
-COPY Makefile Makefile
-COPY main.go main.go
-COPY cmd/ cmd/
-COPY pkg/ pkg/
+COPY main.go ./
+COPY cmd/ ./cmd/
+COPY pkg/ ./pkg/
 
-# Build
-# TODO switch back to original
-RUN CGO_ENABLED=0 GOOS=linux go build -a -o urlshortener-ui main.go
+ARG TARGETOS
+ARG TARGETARCH
 
-# Use distroless as minimal base image to package the urlshortener-api binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-# TODO: For production re-enable distroless!
-#FROM gcr.io/distroless/static:nonroot
-FROM alpine:latest
+# Cross-compiled on the build platform, so the multi-arch build doesn't run
+# the Go toolchain under emulation. CGO is off because the runtime image has
+# no libc.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags "-s -w" -o /out/urlshortener-ui .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+# The server reads its templates and assets from html/ in the working
+# directory.
 WORKDIR /
-COPY --from=builder /workspace/urlshortener-ui .
-COPY html/ html/
+COPY html/ ./html/
+COPY --from=builder /out/urlshortener-ui /urlshortener-ui
 
 USER 65532:65532
 
 EXPOSE 8080
 
-ENTRYPOINT ["/urlshortener-ui serve --bind-address=:8080"]
+LABEL org.opencontainers.image.title="urlshortener-ui"
+LABEL org.opencontainers.image.description="The web UI for urlshortener's shortlinks"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="SpechtLabs"
+
+ENTRYPOINT ["/urlshortener-ui"]
+CMD ["serve", "--bind-address=:8080"]
