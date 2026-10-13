@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/sierrasoftworks/humane-errors-go v0.0.0-20260820132314-9a466da5e0f0
-	github.com/spechtlabs/go-gin-prometheus v0.1.2
+	github.com/spechtlabs/go-gin-prometheus v0.1.3
 	github.com/spechtlabs/go-otel-utils/otelprovider v0.2.3
 	github.com/spechtlabs/go-otel-utils/otelzap v0.2.3
 	github.com/spf13/cobra v1.10.2
@@ -50,7 +50,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
-	github.com/prometheus/client_golang v1.24.1 // indirect
+	github.com/prometheus/client_golang v1.25.0 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
